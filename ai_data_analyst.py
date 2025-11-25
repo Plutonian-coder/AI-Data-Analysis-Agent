@@ -20,7 +20,14 @@ st.set_page_config(page_title="Data Analyst Agent", page_icon="📊", layout="wi
 # Ensure a permanent directory for persistent CSVs
 # ---------------------------------------------------------
 PERSIST_DIR = "persistent_data"
-os.makedirs(PERSIST_DIR, exist_ok=True)
+
+def startup():
+    """Clear the persistent data directory on startup."""
+    if os.path.exists(PERSIST_DIR):
+        shutil.rmtree(PERSIST_DIR)
+    os.makedirs(PERSIST_DIR, exist_ok=True)
+
+startup()
 
 
 # ---------------------------------------------------------
@@ -124,30 +131,30 @@ with st.sidebar:
     uploaded_file = st.file_uploader("Upload Data (CSV/Excel)", type=["csv", "xlsx"])
 
     if uploaded_file and st.session_state.gemini_key:
+        # Reset agent and chat history on new file upload
+        st.session_state.agent = None
+        st.session_state.chat_history = []
+        st.session_state.duckdb_tools = None
+
         temp_path, columns, df = preprocess_and_save(uploaded_file)
 
         if df is not None:
             st.session_state.current_dataset = df
 
-            # Create permanent filename
-            if st.session_state.persistent_file_path is None:
-                persistent_path = os.path.join(
-                    PERSIST_DIR,
-                    f"persistent_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-                )
-                st.session_state.persistent_file_path = persistent_path
+            # Create a fixed path for the persistent file
+            persistent_path = os.path.join(PERSIST_DIR, "persistent_data.csv")
+            st.session_state.persistent_file_path = persistent_path
 
-            # Save CSV permanently
-            shutil.copy(temp_path, st.session_state.persistent_file_path)
+            # Save CSV permanently, overwriting if it exists
+            shutil.copy(temp_path, persistent_path)
 
             # Initialize DuckDB
-            if st.session_state.duckdb_tools is None:
-                st.session_state.duckdb_tools = DuckDbTools()
+            st.session_state.duckdb_tools = DuckDbTools()
 
             # Create table from persistent CSV
             st.session_state.duckdb_tools.run_query("DROP TABLE IF EXISTS uploaded_data;")
             st.session_state.duckdb_tools.run_query(
-                f"CREATE TABLE uploaded_data AS SELECT * FROM read_csv_auto('{st.session_state.persistent_file_path}')"
+                f"CREATE TABLE uploaded_data AS SELECT * FROM read_csv_auto('{persistent_path}')"
             )
 
             # Initialize Agent
