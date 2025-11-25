@@ -5,3 +5,4 @@ pandas
 numpy==1.26.4
 agno>=2.2.10
 google-genai
+shutil
