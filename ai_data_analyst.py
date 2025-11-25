@@ -159,7 +159,7 @@ with st.sidebar:
             # Initialize Agent with optimized settings
             st.session_state.agent = Agent(
                 model=Gemini(
-                    id="gemini-2.0-flash-exp",  # Using faster, more stable model
+                    id="gemini-2.5-flash",  # Using faster, more stable model
                     api_key=st.session_state.gemini_key
                 ),
                 tools=[st.session_state.duckdb_tools, PandasTools()],
