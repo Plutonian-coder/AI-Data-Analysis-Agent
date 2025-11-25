@@ -46,65 +46,47 @@ def preprocess_and_save(file):
         st.error(f"Error processing file: {e}")
         return None, None, None
 
-# Function to find and load the latest temp CSV file
-def get_latest_temp_csv(exclude_path=None):
+# Function to update the current dataset in session and DuckDB
+def update_current_dataset(duckdb_tools):
     """
-    Find the most recently modified CSV file in the temp directory.
-    Excludes the original uploaded file path.
+    Updates the current dataset in session state from DuckDB.
+    This keeps the working dataset in sync after modifications.
     """
     try:
-        temp_dir = tempfile.gettempdir()
-        csv_files = glob.glob(os.path.join(temp_dir, "*.csv"))
+        # Export current state from DuckDB to temp file
+        temp_export_path = f'/tmp/current_session_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+        duckdb_tools.run_query(f"COPY (SELECT * FROM uploaded_data) TO '{temp_export_path}' (HEADER, DELIMITER ',')")
         
-        # Exclude the original uploaded file
-        if exclude_path:
-            csv_files = [f for f in csv_files if f != exclude_path]
+        # Read it back into session state
+        df = pd.read_csv(temp_export_path)
+        st.session_state.current_dataset = df
+        st.session_state.current_dataset_path = temp_export_path
         
-        if not csv_files:
-            return None
-        
-        # Get the most recently modified file
-        latest_file = max(csv_files, key=os.path.getmtime)
-        
-        # Check if file was modified in the last 60 seconds (likely from agent)
-        file_time = os.path.getmtime(latest_file)
-        current_time = datetime.now().timestamp()
-        
-        if current_time - file_time < 60:  # Modified within last minute
-            return latest_file
-        
-        return None
+        return df, temp_export_path
     except Exception as e:
-        st.error(f"Error finding temp file: {e}")
-        return None
+        st.error(f"Error updating dataset: {e}")
+        return None, None
 
-# Function to create download button for temp file
-def create_download_button_for_temp_file(temp_file_path):
+# Function to create download button for current dataset
+def create_download_button(df):
     """
-    Creates a download button for a temp CSV file and displays it as a table.
+    Creates a download button for the current working dataset.
     """
     try:
-        # Read the temp file
-        df = pd.read_csv(temp_file_path)
-        
         if df is not None and not df.empty:
-            st.markdown("---")
-            st.markdown("### Modified Data Table")
-            st.dataframe(df)
-            
-            # Read file content for download
-            with open(temp_file_path, 'rb') as f:
-                csv_data = f.read()
+            # Prepare CSV data
+            csv_buffer = pd.io.common.BytesIO()
+            df.to_csv(csv_buffer, index=False)
+            csv_data = csv_buffer.getvalue()
             
             st.download_button(
-                label="Download Modified Data as CSV",
+                label="⬇️ Download Current Dataset",
                 data=csv_data,
                 file_name=f'modified_data_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv',
                 mime='text/csv',
-                help=f"Download the modified dataset ({df.shape[0]} rows x {df.shape[1]} columns)"
+                help=f"Download the current working dataset ({df.shape[0]} rows × {df.shape[1]} columns)",
+                key=f"download_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
             )
-            
-            st.success(f"Dataset ready for download: {df.shape[0]} rows x {df.shape[1]} columns")
             return True
     except Exception as e:
         st.error(f"Error creating download button: {e}")
@@ -113,19 +95,29 @@ def create_download_button_for_temp_file(temp_file_path):
 # Streamlit app configuration
 st.set_page_config(page_title="Data Analyst Agent", page_icon="📊", layout="wide")
 
-st.title("📊 Data Analyst Agent")
-
-# Initialize session state variables at the very beginning
+# Initialize session state variables
 if "gemini_key" not in st.session_state:
     st.session_state.gemini_key = None
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+if "current_dataset" not in st.session_state:
+    st.session_state.current_dataset = None
+if "current_dataset_path" not in st.session_state:
+    st.session_state.current_dataset_path = None
 if "original_temp_path" not in st.session_state:
     st.session_state.original_temp_path = None
-if "agent_initialized" not in st.session_state:
-    st.session_state.agent_initialized = False
+if "duckdb_tools" not in st.session_state:
+    st.session_state.duckdb_tools = None
+if "agent" not in st.session_state:
+    st.session_state.agent = None
+if "columns" not in st.session_state:
+    st.session_state.columns = []
 
-# Sidebar for API keys
+# Sidebar
 with st.sidebar:
-    st.header("API Keys")
+    st.header("⚙️ Configuration")
+    
+    # API Key Input
     gemini_key_input = st.text_input(
         "Enter your Gemini API key:", 
         type="password", 
@@ -134,94 +126,184 @@ with st.sidebar:
     )
     if gemini_key_input:
         st.session_state.gemini_key = gemini_key_input
-        st.success("API key saved!")
+        st.success("✅ API key saved!")
     else:
-        st.warning("Please enter your Gemini API key to proceed.")
-
-# File upload widget
-uploaded_file = st.file_uploader("Upload a CSV or Excel file", type=["csv", "xlsx"])
-
-if uploaded_file is not None and st.session_state.get('gemini_key'):
-    # Preprocess and save the uploaded file
-    temp_path, columns, df = preprocess_and_save(uploaded_file)
+        st.warning("⚠️ Please enter your Gemini API key to proceed.")
     
-    if temp_path and columns and df is not None:
-        # Store original temp path in session state
-        if st.session_state.get('original_temp_path') is None:
+    st.divider()
+    
+    # File Upload
+    st.subheader("📁 Upload Data")
+    uploaded_file = st.file_uploader("Upload a CSV or Excel file", type=["csv", "xlsx"])
+    
+    if uploaded_file is not None and st.session_state.get('gemini_key'):
+        # Preprocess and save the uploaded file
+        temp_path, columns, df = preprocess_and_save(uploaded_file)
+        
+        if temp_path and columns and df is not None:
+            # Store in session state
             st.session_state.original_temp_path = temp_path
+            st.session_state.current_dataset = df
+            st.session_state.current_dataset_path = temp_path
+            st.session_state.columns = columns
+            
+            # Initialize DuckDB if not already done
+            if st.session_state.duckdb_tools is None:
+                st.session_state.duckdb_tools = DuckDbTools()
+            
+            # Load into DuckDB
+            st.session_state.duckdb_tools.load_local_csv_to_table(
+                path=temp_path,
+                table="uploaded_data",
+            )
+            
+            # Initialize Agent if not already done
+            if st.session_state.agent is None:
+                st.session_state.agent = Agent(
+                    model=Gemini(id="gemini-2.5-flash", api_key=st.session_state.get('gemini_key')),
+                    tools=[st.session_state.duckdb_tools, PandasTools()],
+                    system_message=(
+                        "You are an expert data analyst. Use the uploaded_data table to answer user queries. "
+                        "When performing data cleaning, filtering, or transformation: "
+                        "1. Make ALL changes directly on the uploaded_data table using SQL UPDATE, DELETE, or INSERT statements "
+                        "2. For filtering/subsetting, use: CREATE OR REPLACE TABLE uploaded_data AS SELECT ... FROM uploaded_data WHERE ... "
+                        "3. After making changes, confirm what was done "
+                        "4. DO NOT create new tables - always modify uploaded_data in place "
+                        "For simple queries (counts, averages), just provide the answer. "
+                        "Remember: All modifications should persist in the uploaded_data table for the next query."
+                    ),
+                    markdown=True,
+                )
+            
+            st.success(f"✅ File loaded: {df.shape[0]} rows × {df.shape[1]} columns")
+            
+            # Clear chat history on new upload
+            if st.button("🔄 Reset Chat History"):
+                st.session_state.chat_history = []
+                st.rerun()
+    
+    st.divider()
+    
+    # Dataset Info
+    if st.session_state.current_dataset is not None:
+        st.subheader("📊 Current Dataset Info")
+        df = st.session_state.current_dataset
+        st.metric("Rows", df.shape[0])
+        st.metric("Columns", df.shape[1])
         
-        # Display the uploaded data as a table
-        st.write("Uploaded Data:")
-        st.dataframe(df)
+        with st.expander("📋 Column Names"):
+            for col in df.columns:
+                st.text(f"• {col}")
         
-        # Display the columns of the uploaded data
-        st.write("Uploaded columns:", columns)
+        # Download button in sidebar
+        st.divider()
+        create_download_button(df)
+
+# Main content area
+st.title("📊 Data Analyst Agent")
+st.markdown("Ask questions about your data or request modifications in natural language.")
+
+# Display current dataset preview
+if st.session_state.current_dataset is not None:
+    with st.expander("👁️ View Current Dataset", expanded=False):
+        st.dataframe(st.session_state.current_dataset, use_container_width=True)
+
+# Chat interface
+st.divider()
+
+# Display chat history
+chat_container = st.container()
+with chat_container:
+    for i, message in enumerate(st.session_state.chat_history):
+        if message["role"] == "user":
+            with st.chat_message("user"):
+                st.markdown(message["content"])
+        else:
+            with st.chat_message("assistant"):
+                st.markdown(message["content"])
+                
+                # Show dataset preview if it was modified
+                if message.get("dataset_modified") and message.get("modified_data") is not None:
+                    with st.expander("📊 Modified Dataset Preview"):
+                        st.dataframe(message["modified_data"], use_container_width=True)
+                        st.caption(f"Shape: {message['modified_data'].shape[0]} rows × {message['modified_data'].shape[1]} columns")
+
+# Chat input
+if st.session_state.current_dataset is not None and st.session_state.get('gemini_key'):
+    user_input = st.chat_input("Ask a question or request a modification...")
+    
+    if user_input:
+        # Add user message to chat history
+        st.session_state.chat_history.append({
+            "role": "user",
+            "content": user_input
+        })
         
-        # Initialize DuckDbTools
-        duckdb_tools = DuckDbTools()
+        # Display user message immediately
+        with st.chat_message("user"):
+            st.markdown(user_input)
         
-        # Load the CSV file into DuckDB as a table
-        duckdb_tools.load_local_csv_to_table(
-            path=temp_path,
-            table="uploaded_data",
-        )
-        
-        # Initialize the Agent with Gemini model
-        data_analyst_agent = Agent(
-            model=Gemini(id="gemini-2.5-flash", api_key=st.session_state.get('gemini_key')),
-            tools=[duckdb_tools, PandasTools()],
-            system_message=(
-                "You are an expert data analyst. Use the uploaded_data table to answer user queries. "
-                "When performing data cleaning, filtering, or transformation: "
-                "1. Make changes using SQL statements on the uploaded_data table "
-                "2. Export the modified data to a CSV file in the temp directory using: "
-                "   COPY (SELECT * FROM uploaded_data) TO '/tmp/modified_data.csv' (HEADER, DELIMITER ',') "
-                "3. Confirm the export was successful "
-                "For simple queries (counts, averages), just provide the answer. "
-                "Always export modified datasets to CSV so users can download them."
-            ),
-            markdown=True,
-        )
-        
-        st.session_state.agent_initialized = True
-        
-        # Main query input widget
-        user_query = st.text_area("Ask a query about the data:")
-        
-        # Add info message about terminal output
-        st.info("💡 Check your terminal for a clearer output of the agent's response")
-        
-        if st.button("Submit Query"):
-            if user_query.strip() == "":
-                st.warning("Please enter a query.")
-            else:
+        # Get agent response
+        with st.chat_message("assistant"):
+            with st.spinner("Analyzing..."):
                 try:
-                    # Show loading spinner while processing
-                    with st.spinner('Processing your query...'):
-                        # Get the response from the agent
-                        response = data_analyst_agent.run(user_query)
-
-                        # Extract the content from the response object
-                        if hasattr(response, 'content'):
-                            response_content = response.content
-                        else:
-                            response_content = str(response)
-
-                    # Display the response in Streamlit
-                    st.markdown("### Agent Response")
+                    # Run the agent
+                    response = st.session_state.agent.run(user_input)
+                    
+                    # Extract response content
+                    if hasattr(response, 'content'):
+                        response_content = response.content
+                    else:
+                        response_content = str(response)
+                    
+                    # Display response
                     st.markdown(response_content)
                     
-                    # Check for newly created temp files
-                    original_path = st.session_state.get('original_temp_path', None)
-                    latest_temp = get_latest_temp_csv(exclude_path=original_path)
+                    # Update the current dataset from DuckDB
+                    updated_df, updated_path = update_current_dataset(st.session_state.duckdb_tools)
                     
-                    if latest_temp:
-                        create_download_button_for_temp_file(latest_temp)
-                    else:
-                        # Try checking for /tmp/modified_data.csv specifically
-                        if os.path.exists('/tmp/modified_data.csv'):
-                            create_download_button_for_temp_file('/tmp/modified_data.csv')
-                
+                    # Check if dataset was actually modified
+                    dataset_modified = False
+                    if updated_df is not None:
+                        # Compare with previous state
+                        if not updated_df.equals(st.session_state.current_dataset):
+                            dataset_modified = True
+                            st.session_state.current_dataset = updated_df
+                            st.session_state.current_dataset_path = updated_path
+                            
+                            # Show preview of modified data
+                            with st.expander("📊 Modified Dataset Preview"):
+                                st.dataframe(updated_df, use_container_width=True)
+                                st.caption(f"Shape: {updated_df.shape[0]} rows × {updated_df.shape[1]} columns")
+                            
+                            st.success(f"✅ Dataset updated: {updated_df.shape[0]} rows × {updated_df.shape[1]} columns")
+                    
+                    # Add assistant response to chat history
+                    st.session_state.chat_history.append({
+                        "role": "assistant",
+                        "content": response_content,
+                        "dataset_modified": dataset_modified,
+                        "modified_data": updated_df if dataset_modified else None
+                    })
+                    
                 except Exception as e:
-                    st.error(f"Error generating response from the agent: {e}")
-                    st.error("Please try rephrasing your query or check if the data format is correct.")
+                    error_msg = f"❌ Error: {str(e)}"
+                    st.error(error_msg)
+                    st.session_state.chat_history.append({
+                        "role": "assistant",
+                        "content": error_msg,
+                        "dataset_modified": False,
+                        "modified_data": None
+                    })
+        
+        # Rerun to update the chat display
+        st.rerun()
+
+elif st.session_state.current_dataset is None:
+    st.info("👈 Please upload a CSV or Excel file from the sidebar to get started.")
+elif not st.session_state.get('gemini_key'):
+    st.info("👈 Please enter your Gemini API key in the sidebar to get started.")
+
+# Footer
+st.divider()
+st.caption("💡 Tip: Each query works on the current state of your dataset. All modifications persist throughout the session.")
